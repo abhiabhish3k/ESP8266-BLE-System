@@ -29,17 +29,20 @@ ESP8266-BLE-System/
 │   │   └── api_handlers.h/.cpp # ESPAsyncWebServer route handlers
 │   └── data/
 │       └── index.html          # Web dashboard (served from LittleFS)
-└── android/
-    ├── build.gradle
-    ├── settings.gradle
-    └── app/
-        ├── build.gradle
-        └── src/main/
-            ├── AndroidManifest.xml
-            └── java/com/attendance/ble/
-                ├── BLEScanner.kt    # BLE scanning + deduplication
-                ├── ApiClient.kt     # OkHttp REST client
-                └── MainActivity.kt  # UI + orchestration
+├── android/
+│   ├── build.gradle
+│   ├── settings.gradle
+│   └── app/
+│       ├── build.gradle
+│       └── src/main/
+│           ├── AndroidManifest.xml
+│           └── java/com/attendance/ble/
+│               ├── BLEScanner.kt    # BLE scanning + deduplication
+│               ├── ApiClient.kt     # OkHttp REST client
+│               └── MainActivity.kt  # UI + orchestration
+└── ble_advertiser/
+    ├── advertiser.py            # Python BLE beacon advertiser (student device)
+    └── requirements.txt         # pip dependencies (bless)
 ```
 
 ---
@@ -209,6 +212,97 @@ Open `android/` in Android Studio → Run on device.
   - Enter ESP8266 IP, connect, start/stop scanning
   - Shows live device list with RSSI
   - Background reconnect loop every 10 s
+
+---
+
+## Python BLE Beacon Advertiser
+
+Students who use a **laptop or Raspberry Pi** (anything running Python with a
+Bluetooth adapter) can run `ble_advertiser/advertiser.py` instead of carrying
+a dedicated BLE peripheral.
+
+The script broadcasts a short, stable **Beacon ID** as the BLE local name.
+The Android scanner (`BLEScanner.kt`) reads this name from the advertisement
+packet and uses it as `device_id` — bypassing MAC address randomisation
+entirely.
+
+### Why this matters
+
+Modern phones and many OS-level BLE stacks rotate the Bluetooth MAC address
+periodically to prevent tracking.  A rotating MAC breaks the simple
+string-equality match in the ESP8266.  A stable local name prefixed with
+`ATT-` solves this without any change to the ESP8266 firmware.
+
+### Requirements
+
+| | |
+|---|---|
+| Python | ≥ 3.8 |
+| OS | Linux (BlueZ ≥ 5.43), macOS 10.15+, Windows 10 1803+ |
+| Hardware | Any Bluetooth 4.0+ adapter |
+
+```bash
+cd ble_advertiser
+pip install -r requirements.txt
+```
+
+> **Linux note:** BlueZ advertising requires either `sudo` or a Bluetooth
+> capability grant:
+> ```bash
+> sudo python advertiser.py --beacon-id ATT-john-doe
+> # or, to avoid sudo permanently:
+> sudo setcap 'cap_net_admin+eip' $(which python3)
+> ```
+
+### Usage
+
+```bash
+python advertiser.py --beacon-id ATT-<your-id>
+```
+
+**Beacon ID rules:**
+- Must start with `ATT-`
+- Suffix: letters, digits, `-`, `_` only (no spaces)
+- Maximum 29 characters total
+- Examples: `ATT-john-doe`, `ATT-S12345`, `ATT-alice_smith`
+
+### Registration walkthrough
+
+```
+1. Run the script:
+       python advertiser.py --beacon-id ATT-john-doe
+
+   Output:
+       ======================================================
+         ESP8266 Attendance System – BLE Beacon Advertiser
+       ======================================================
+         Beacon ID  :  ATT-john-doe
+         Register as:  device_id = ATT-john-doe
+       ======================================================
+       ✓  Advertising as:  ATT-john-doe
+
+2. Open the ESP8266 web dashboard → Students tab
+3. Register:
+       Name      : John Doe
+       Device ID : ATT-john-doe   ← exact string from step 1
+
+4. Start an attendance session (dashboard → Session tab)
+5. Keep the script running in the background during class
+```
+
+### How detection works
+
+```
+advertiser.py               Android BLEScanner          ESP8266
+─────────────               ──────────────────          ───────
+Advertises local            Reads scanRecord            Looks up deviceId
+name = "ATT-john-doe"  ──►  .deviceName = "ATT-john-doe"   in students[]
+                            Uses name as deviceId   ──► Marks student present
+```
+
+The `ATT-` prefix is the handshake between the Python advertiser and the
+Android scanner.  Any device name without this prefix falls back to the
+hardware MAC (for dedicated BLE peripherals).
 
 ---
 

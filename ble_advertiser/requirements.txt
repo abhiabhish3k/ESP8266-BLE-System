@@ -1,0 +1,5 @@
+# ESP8266 Attendance System – BLE Beacon Advertiser
+# Python >= 3.8 required
+
+# Core BLE advertising library (cross-platform: Linux/BlueZ, macOS, Windows)
+bless>=0.3.0

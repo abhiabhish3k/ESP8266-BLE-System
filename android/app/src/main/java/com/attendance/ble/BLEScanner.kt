@@ -36,10 +36,28 @@ class BLEScanner(
 ) {
     /** Represents one discovered BLE device. */
     data class ScannedDevice(
-        val deviceId: String,   // MAC address (or synthetic ID on API 31+)
+        /**
+         * Stable device identifier sent to the ESP8266 as [device_id].
+         *
+         * Two sources, in priority order:
+         *  1. BLE local name prefixed with "ATT-" (set by the Python beacon
+         *     advertiser).  This is rotation-proof and human-readable, and is
+         *     the recommended identity for student laptops / Raspberry Pis.
+         *  2. Hardware MAC address – used for dedicated BLE peripherals
+         *     (fitness trackers, beacons) whose MAC does not rotate.
+         *
+         * Whatever string is stored here must exactly match the device_id
+         * registered in the ESP8266 student list.
+         */
+        val deviceId: String,
         val rssi: Int,
         val timestamp: Long     // Unix epoch seconds (System.currentTimeMillis / 1000)
     )
+
+    companion object {
+        /** Prefix used by the Python beacon advertiser (advertiser.py). */
+        private const val BEACON_PREFIX = "ATT-"
+    }
 
     // Live deduplicated map: deviceId → latest scan result
     private val deviceMap = ConcurrentHashMap<String, ScannedDevice>()
@@ -129,7 +147,7 @@ class BLEScanner(
             val rssi = result.rssi
             if (rssi < minRssi) return // filter weak signals
 
-            val deviceId = result.device.address ?: return
+            val deviceId = extractDeviceId(result) ?: return
             val ts = System.currentTimeMillis() / 1000
 
             val existing = deviceMap[deviceId]
@@ -142,6 +160,26 @@ class BLEScanner(
         override fun onScanFailed(errorCode: Int) {
             Log.e(TAG, "Scan failed with error code: $errorCode")
         }
+    }
+
+    /**
+     * Derive the stable device identifier from a [ScanResult].
+     *
+     * Priority:
+     *  1. BLE local name starting with [BEACON_PREFIX] – set by the Python
+     *     beacon advertiser.  Rotation-proof and human-readable.
+     *  2. Hardware MAC address – fallback for dedicated BLE peripherals
+     *     (fitness trackers, beacons) whose MAC does not rotate.
+     *
+     * Returns null when neither a valid beacon name nor a MAC is available,
+     * so the caller can skip the result safely.
+     */
+    private fun extractDeviceId(result: ScanResult): String? {
+        val localName = result.scanRecord?.deviceName
+        if (!localName.isNullOrEmpty() && localName.startsWith(BEACON_PREFIX)) {
+            return localName
+        }
+        return result.device.address
     }
 
     private fun hasPermissions(): Boolean {
